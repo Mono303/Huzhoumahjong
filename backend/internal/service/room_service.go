@@ -24,6 +24,8 @@ var (
 	ErrInvalidGameAction   = errors.New("invalid game action")
 	ErrGameNotStarted      = errors.New("game has not started")
 	ErrRoomRequiresPlayers = errors.New("at least two human players are required")
+	ErrLeaveWhilePlaying   = errors.New("cannot leave room while game is in progress")
+	ErrReadyWhilePlaying   = errors.New("ready status can only be changed while waiting")
 )
 
 type RoomService struct {
@@ -156,6 +158,9 @@ func (s *RoomService) LeaveRoom(ctx context.Context, code string, user *model.Us
 	if player == nil {
 		return nil, ErrPlayerNotInRoom
 	}
+	if active.room.Status == model.RoomStatusPlaying {
+		return nil, ErrLeaveWhilePlaying
+	}
 
 	if err := s.roomRepo.RemovePlayer(ctx, active.room.ID, user.ID); err != nil {
 		return nil, err
@@ -216,6 +221,9 @@ func (s *RoomService) ToggleReady(ctx context.Context, code string, user *model.
 	player := s.findPlayerByUserID(active.players, user.ID)
 	if player == nil {
 		return nil, ErrPlayerNotInRoom
+	}
+	if active.room.Status != model.RoomStatusWaiting {
+		return nil, ErrReadyWhilePlaying
 	}
 	player.IsReady = ready
 	for index := range active.players {

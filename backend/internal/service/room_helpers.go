@@ -130,23 +130,28 @@ func (s *RoomService) availableActionsLocked(active *ActiveRoom, seat int) []mod
 		return nil
 	}
 
-	if game.Pending != nil && game.Pending.Seat == seat {
-		return cloneActionOptions(game.Pending.Options)
+	if current := currentPendingClaim(game.Pending); current != nil {
+		if current.Seat == seat {
+			return cloneActionOptions(current.Options)
+		}
+		return nil
 	}
 
 	if game.Phase == "discard" && game.CurrentTurn == seat {
 		options := []model.GameActionOption{
 			{Type: model.ActionDiscard, TileKeys: tileKeys(game.Hands[seat])},
 		}
-		if s.selfDrawWinLocked(game, seat) {
+		if game.TurnDrawn && s.selfDrawWinLocked(game, seat) {
 			options = append([]model.GameActionOption{{Type: model.ActionHu}}, options...)
 		}
-		gangs := s.selfGangTilesLocked(game, seat)
-		if len(gangs) > 0 {
-			options = append(options, model.GameActionOption{
-				Type:     model.ActionGangSelf,
-				TileKeys: tileKeys(gangs),
-			})
+		if game.TurnDrawn {
+			gangs := s.selfGangTilesLocked(game, seat)
+			if len(gangs) > 0 {
+				options = append(options, model.GameActionOption{
+					Type:     model.ActionGangSelf,
+					TileKeys: tileKeys(gangs),
+				})
+			}
 		}
 		return options
 	}
@@ -206,6 +211,15 @@ func (s *RoomService) findPlayerByUserID(players []model.RoomPlayer, userID stri
 func (s *RoomService) nextHumanPlayer(players []model.RoomPlayer) *model.RoomPlayer {
 	for index := range players {
 		if !players[index].IsBot && players[index].UserID != "" {
+			return &players[index]
+		}
+	}
+	return nil
+}
+
+func playerAtSeat(players []model.RoomPlayer, seat int) *model.RoomPlayer {
+	for index := range players {
+		if players[index].Seat == seat {
 			return &players[index]
 		}
 	}

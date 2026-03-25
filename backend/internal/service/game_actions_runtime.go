@@ -1,6 +1,3 @@
-//go:build ignore
-// +build ignore
-
 package service
 
 import (
@@ -69,23 +66,37 @@ func (s *RoomService) applyPendingActionLocked(ctx context.Context, active *Acti
 	if pending == nil {
 		return ErrInvalidGameAction
 	}
-	if !actionAllowed(pending.Options, action) {
+
+	current := currentPendingClaim(pending)
+	if current == nil || current.Seat != seat || !actionAllowed(current.Options, action) {
 		return ErrInvalidGameAction
 	}
 
+	clearPending := true
 	switch action {
 	case model.ActionPass:
-		game.Pending = nil
-		s.appendGameLogLocked(ctx, active, "pass", map[string]any{"seat": seat}, seatName(active.players, seat)+" 选择过")
+		s.appendGameLogLocked(ctx, active, "pass", map[string]any{"seat": seat}, seatName(active.players, seat)+" 选择过牌")
+		if s.advancePendingClaimLocked(active) {
+			clearPending = false
+			break
+		}
 		s.advanceTurnLocked(ctx, active, pending.FromSeat)
 	case model.ActionHu:
-		s.finishGameLocked(ctx, active, seat, false, "点炮")
+		if pending.Source == "discard" {
+			s.claimDiscardLocked(game, pending.FromSeat, pending.Tile)
+			s.finishGameLocked(ctx, active, seat, false, discardWinReasonLocked(game, seat))
+			break
+		}
+		s.finishGameLocked(ctx, active, seat, false, "抢杠胡")
 	case model.ActionPeng:
+		s.claimDiscardLocked(game, pending.FromSeat, pending.Tile)
 		s.doPengLocked(ctx, active, seat, pending.Tile)
 	case model.ActionGang:
+		s.claimDiscardLocked(game, pending.FromSeat, pending.Tile)
 		s.doGangFromDiscardLocked(ctx, active, seat, pending.Tile)
 	case model.ActionChi:
-		option := findActionOption(pending.Options, model.ActionChi)
+		s.claimDiscardLocked(game, pending.FromSeat, pending.Tile)
+		option := findActionOption(current.Options, model.ActionChi)
 		if option == nil || chiIndex < 0 || chiIndex >= len(option.ChiOptions) {
 			return ErrInvalidGameAction
 		}
@@ -94,7 +105,9 @@ func (s *RoomService) applyPendingActionLocked(ctx context.Context, active *Acti
 		return ErrInvalidGameAction
 	}
 
-	game.Pending = nil
+	if clearPending {
+		game.Pending = nil
+	}
 	return nil
 }
 
@@ -114,9 +127,12 @@ func (s *RoomService) doPengLocked(ctx context.Context, active *ActiveRoom, seat
 		Tiles: []model.Tile{tile, tile, tile},
 	})
 	active.game.CurrentTurn = seat
+	active.game.TurnDrawn = false
+	active.game.GangBlock[seat] = tile.Code
 	active.game.Phase = "discard"
+	active.game.LastDiscard = nil
 	s.appendGameLogLocked(ctx, active, "peng", map[string]any{"seat": seat, "tile": tile}, seatName(active.players, seat)+" 碰 "+tileLabel(tile))
-	if active.players[seat].IsBot {
+	if player := playerAtSeat(active.players, seat); player != nil && player.IsBot {
 		active.version++
 		go s.runBotTurn(active.room.Code, seat, active.version)
 	}
@@ -141,9 +157,12 @@ func (s *RoomService) doChiLocked(ctx context.Context, active *ActiveRoom, seat 
 		Tiles: cloneTiles(seq),
 	})
 	active.game.CurrentTurn = seat
+	active.game.TurnDrawn = false
+	active.game.GangBlock[seat] = ""
 	active.game.Phase = "discard"
+	active.game.LastDiscard = nil
 	s.appendGameLogLocked(ctx, active, "chi", map[string]any{"seat": seat, "tile": tile}, seatName(active.players, seat)+" 吃 "+tileLabel(tile))
-	if active.players[seat].IsBot {
+	if player := playerAtSeat(active.players, seat); player != nil && player.IsBot {
 		active.version++
 		go s.runBotTurn(active.room.Code, seat, active.version)
 	}
@@ -164,8 +183,10 @@ func (s *RoomService) doGangFromDiscardLocked(ctx context.Context, active *Activ
 		Type:  "gang_open",
 		Tiles: []model.Tile{tile, tile, tile, tile},
 	})
+	active.game.GangBlock[seat] = ""
+	active.game.LastDiscard = nil
 	s.appendGameLogLocked(ctx, active, "gang", map[string]any{"seat": seat, "tile": tile}, seatName(active.players, seat)+" 杠 "+tileLabel(tile))
-	s.beginTurnLocked(ctx, active, seat)
+	s.beginTurnWithSourceLocked(ctx, active, seat, "gang")
 }
 
 func (s *RoomService) doSelfGangLocked(ctx context.Context, active *ActiveRoom, seat int, tileKey string) error {
@@ -209,8 +230,9 @@ func (s *RoomService) doSelfGangLocked(ctx context.Context, active *ActiveRoom, 
 		})
 	}
 
+	active.game.GangBlock[seat] = ""
 	s.appendGameLogLocked(ctx, active, "gang_self", map[string]any{"seat": seat, "tile": target}, seatName(active.players, seat)+" 自杠 "+tileLabel(target))
-	s.beginTurnLocked(ctx, active, seat)
+	s.beginTurnWithSourceLocked(ctx, active, seat, "gang")
 	return nil
 }
 
@@ -307,4 +329,63 @@ func (s *RoomService) appendGameLogLocked(ctx context.Context, active *ActiveRoo
 		CreatedAt: entry.CreatedAt,
 	}
 	_ = s.matchRepo.AppendEvent(ctx, &event)
+}
+
+func currentPendingClaim(pending *PendingReaction) *PendingClaim {
+	if pending == nil || pending.Index < 0 || pending.Index >= len(pending.Claims) {
+		return nil
+	}
+	return &pending.Claims[pending.Index]
+}
+
+func (s *RoomService) advancePendingClaimLocked(active *ActiveRoom) bool {
+	if active.game == nil || active.game.Pending == nil {
+		return false
+	}
+	active.game.Pending.Index++
+	if currentPendingClaim(active.game.Pending) == nil {
+		active.game.Pending = nil
+		return false
+	}
+	active.version++
+	s.schedulePendingBotLocked(active)
+	return true
+}
+
+func (s *RoomService) schedulePendingBotLocked(active *ActiveRoom) {
+	current := currentPendingClaim(active.game.Pending)
+	if current == nil {
+		return
+	}
+	player := playerAtSeat(active.players, current.Seat)
+	if player != nil && player.IsBot {
+		version := active.version
+		go s.runBotReaction(active.room.Code, current.Seat, version)
+	}
+}
+
+func (s *RoomService) claimDiscardLocked(game *GameState, fromSeat int, tile model.Tile) {
+	if fromSeat < 0 || fromSeat >= len(game.Discards) || len(game.Discards[fromSeat]) == 0 {
+		game.LastDiscard = nil
+		return
+	}
+
+	last := len(game.Discards[fromSeat]) - 1
+	if game.Discards[fromSeat][last].Key == tile.Key {
+		game.Discards[fromSeat] = game.Discards[fromSeat][:last]
+	} else {
+		for index := last; index >= 0; index-- {
+			if game.Discards[fromSeat][index].Key == tile.Key {
+				game.Discards[fromSeat] = append(game.Discards[fromSeat][:index], game.Discards[fromSeat][index+1:]...)
+				break
+			}
+		}
+	}
+}
+
+func discardWinReasonLocked(game *GameState, seat int) string {
+	if isEarthHuLocked(game, seat, "discard") {
+		return "地胡"
+	}
+	return "点炮"
 }

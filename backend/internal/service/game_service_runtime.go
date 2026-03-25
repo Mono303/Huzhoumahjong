@@ -1,6 +1,3 @@
-//go:build ignore
-// +build ignore
-
 package service
 
 import (
@@ -97,6 +94,7 @@ func (s *RoomService) StartGame(ctx context.Context, code string, user *model.Us
 		Melds:        make([][]model.Meld, 4),
 		Discards:     make([][]model.Tile, 4),
 		Scores:       make([]int, 4),
+		GangBlock:    make([]string, 4),
 		Logs:         []model.GameLogEntry{},
 		LastMoveTime: time.Now().UTC(),
 	}
@@ -142,9 +140,11 @@ func (s *RoomService) HandleDiscard(ctx context.Context, code string, user *mode
 	tile := active.game.Hands[seat][index]
 	active.game.Hands[seat] = append(active.game.Hands[seat][:index], active.game.Hands[seat][index+1:]...)
 	active.game.Discards[seat] = append(active.game.Discards[seat], tile)
+	active.game.DiscardCount++
 	active.game.LastDiscard = &model.DiscardRef{Seat: seat, Tile: tile}
 	active.game.Phase = "react"
 	active.game.Pending = nil
+	active.game.TurnDrawn = false
 	active.version++
 	s.appendGameLogLocked(ctx, active, "discard", map[string]any{
 		"seat": seat,
@@ -178,18 +178,19 @@ func (s *RoomService) HandleGameAction(ctx context.Context, code string, user *m
 
 	switch {
 	case active.game.Pending != nil:
-		if active.game.Pending.Seat != seat {
+		current := currentPendingClaim(active.game.Pending)
+		if current == nil || current.Seat != seat {
 			return ErrInvalidGameAction
 		}
 		if err := s.applyPendingActionLocked(ctx, active, seat, action, tileKey, chiIndex); err != nil {
 			return err
 		}
-	case action == model.ActionHu && active.game.CurrentTurn == seat && active.game.Phase == "discard":
+	case action == model.ActionHu && active.game.CurrentTurn == seat && active.game.Phase == "discard" && active.game.TurnDrawn:
 		if !s.selfDrawWinLocked(active.game, seat) {
 			return ErrInvalidGameAction
 		}
-		s.finishGameLocked(ctx, active, seat, true, "自摸")
-	case action == model.ActionGangSelf && active.game.CurrentTurn == seat && active.game.Phase == "discard":
+		s.finishGameLocked(ctx, active, seat, true, selfDrawReasonLocked(active.game, seat))
+	case action == model.ActionGangSelf && active.game.CurrentTurn == seat && active.game.Phase == "discard" && active.game.TurnDrawn:
 		if err := s.doSelfGangLocked(ctx, active, seat, tileKey); err != nil {
 			return err
 		}
@@ -206,13 +207,19 @@ func (s *RoomService) initRoundLocked(ctx context.Context, active *ActiveRoom) {
 	game.Deck = shuffledDeck()
 	game.DrawIndex = 0
 	game.LastDiscard = nil
+	game.LastDrawTile = nil
+	game.LastDrawSeat = -1
+	game.LastDrawVia = ""
 	game.Pending = nil
 	game.Result = nil
 	game.Phase = "setup"
+	game.DiscardCount = 0
+	game.TurnDrawn = false
 	for seat := 0; seat < 4; seat++ {
 		game.Hands[seat] = nil
 		game.Melds[seat] = nil
 		game.Discards[seat] = nil
+		game.GangBlock[seat] = ""
 	}
 	for seat := 0; seat < 4; seat++ {
 		for card := 0; card < 13; card++ {
@@ -230,6 +237,10 @@ func (s *RoomService) initRoundLocked(ctx context.Context, active *ActiveRoom) {
 }
 
 func (s *RoomService) beginTurnLocked(ctx context.Context, active *ActiveRoom, seat int) {
+	s.beginTurnWithSourceLocked(ctx, active, seat, "draw")
+}
+
+func (s *RoomService) beginTurnWithSourceLocked(ctx context.Context, active *ActiveRoom, seat int, source string) {
 	game := active.game
 	drawn, ok := s.drawTileLocked(game, seat)
 	if !ok {
@@ -240,13 +251,18 @@ func (s *RoomService) beginTurnLocked(ctx context.Context, active *ActiveRoom, s
 	game.CurrentTurn = seat
 	game.Pending = nil
 	game.Phase = "discard"
+	game.TurnDrawn = true
+	game.GangBlock[seat] = ""
+	game.LastDrawTile = &drawn
+	game.LastDrawSeat = seat
+	game.LastDrawVia = source
 	active.version++
 	s.appendGameLogLocked(ctx, active, "draw", map[string]any{
 		"seat": seat,
 		"tile": drawn,
 	}, seatName(active.players, seat)+" 摸牌")
 
-	if active.players[seat].IsBot {
+	if player := playerAtSeat(active.players, seat); player != nil && player.IsBot {
 		version := active.version
 		go s.runBotTurn(active.room.Code, seat, version)
 	}
@@ -266,15 +282,17 @@ func (s *RoomService) runBotTurn(code string, seat int, version int64) {
 	if active.version != version || active.game == nil || active.game.CurrentTurn != seat || active.game.Phase != "discard" {
 		return
 	}
-	if s.selfDrawWinLocked(active.game, seat) {
-		s.finishGameLocked(ctx, active, seat, true, "自摸")
+	if active.game.TurnDrawn && s.selfDrawWinLocked(active.game, seat) {
+		s.finishGameLocked(ctx, active, seat, true, selfDrawReasonLocked(active.game, seat))
 		_, _ = s.snapshotLocked(ctx, active)
 		return
 	}
-	if gangTile := s.firstSelfGangTileLocked(active.game, seat); gangTile != nil {
-		if err := s.doSelfGangLocked(ctx, active, seat, gangTile.Key); err == nil {
-			_, _ = s.snapshotLocked(ctx, active)
-			return
+	if active.game.TurnDrawn {
+		if gangTile := s.firstSelfGangTileLocked(active.game, seat); gangTile != nil {
+			if err := s.doSelfGangLocked(ctx, active, seat, gangTile.Key); err == nil {
+				_, _ = s.snapshotLocked(ctx, active)
+				return
+			}
 		}
 	}
 
@@ -288,9 +306,11 @@ func (s *RoomService) runBotTurn(code string, seat int, version int64) {
 	tile := active.game.Hands[seat][index]
 	active.game.Hands[seat] = append(active.game.Hands[seat][:index], active.game.Hands[seat][index+1:]...)
 	active.game.Discards[seat] = append(active.game.Discards[seat], tile)
+	active.game.DiscardCount++
 	active.game.LastDiscard = &model.DiscardRef{Seat: seat, Tile: tile}
 	active.game.Phase = "react"
 	active.game.Pending = nil
+	active.game.TurnDrawn = false
 	active.version++
 	s.appendGameLogLocked(ctx, active, "discard", map[string]any{
 		"seat": seat,

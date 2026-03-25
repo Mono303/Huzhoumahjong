@@ -1,6 +1,3 @@
-//go:build ignore
-// +build ignore
-
 package service
 
 import (
@@ -41,6 +38,9 @@ func (s *RoomService) selfGangTilesLocked(game *GameState, seat int) []model.Til
 
 	gangs := []model.Tile{}
 	for code, count := range counts {
+		if game.GangBlock[seat] == code {
+			continue
+		}
 		if count == 4 {
 			gangs = append(gangs, first[code])
 			continue
@@ -54,6 +54,9 @@ func (s *RoomService) selfGangTilesLocked(game *GameState, seat int) []model.Til
 			}
 		}
 	}
+	sort.Slice(gangs, func(i, j int) bool {
+		return tileOrder(gangs[i]) < tileOrder(gangs[j])
+	})
 	return gangs
 }
 
@@ -82,6 +85,7 @@ func (s *RoomService) selectReactionLocked(active *ActiveRoom, fromSeat int, til
 			})
 			continue
 		}
+
 		options := []model.GameActionOption{}
 		if source == "discard" && s.canGangOnDiscardLocked(active.game, seat, tile) {
 			options = append(options, model.GameActionOption{Type: model.ActionGang})
@@ -95,14 +99,15 @@ func (s *RoomService) selectReactionLocked(active *ActiveRoom, fromSeat int, til
 				Options: append(options, model.GameActionOption{Type: model.ActionPass}),
 			})
 		}
+
 		if source == "discard" && seat == (fromSeat+1)%4 {
 			chiSeqs := s.chiOptionsLocked(active.game, seat, tile, fromSeat)
 			if len(chiSeqs) > 0 {
 				chiClaim = PendingClaim{
 					Seat: seat,
 					Options: []model.GameActionOption{
-					{Type: model.ActionChi, ChiOptions: chiSeqs},
-					{Type: model.ActionPass},
+						{Type: model.ActionChi, ChiOptions: chiSeqs},
+						{Type: model.ActionPass},
 					},
 				}
 			}
@@ -155,7 +160,7 @@ func (s *RoomService) canHuOnClaimLocked(game *GameState, seat int, tile model.T
 }
 
 func (s *RoomService) chiOptionsLocked(game *GameState, seat int, tile model.Tile, fromSeat int) [][]model.Tile {
-	if (fromSeat+1)%4 != seat || tile.Suit == "h" {
+	if (fromSeat+1)%4 != seat || tile.Suit == "h" || tile.Code == "P" {
 		return nil
 	}
 
@@ -221,15 +226,14 @@ func (s *RoomService) calcFanLocked(game *GameState, seat int, selfDraw bool) (i
 		points += 3
 		parts = append(parts, "混一色 +3")
 	}
+	if len(melds) == 0 && isThirteenMismatchWithHand(hand) {
+		points += 12
+		parts = append(parts, "十三不搭 +12")
+	}
+
 	if len(melds) == 0 && isSevenPairs(hand) {
-		honorPairs := 0
-		counts := tileCounts(hand)
-		for code, count := range counts {
-			if strings.HasPrefix(code, "h") && count >= 2 {
-				honorPairs++
-			}
-		}
-		if honorPairs >= 2 {
+		pairs := countFourOfAKindPairs(hand)
+		if pairs >= 2 {
 			points += 8
 			parts = append(parts, "豪华七对 +8")
 		} else {
@@ -240,6 +244,28 @@ func (s *RoomService) calcFanLocked(game *GameState, seat int, selfDraw bool) (i
 		points += 4
 		parts = append(parts, "对对胡 +4")
 	}
+
+	if selfDraw && isSkyHuLocked(game, seat) {
+		points += 12
+		parts = append(parts, "天胡 +12")
+	}
+	if !selfDraw && isEarthHuLocked(game, seat, "discard") {
+		points += 12
+		parts = append(parts, "地胡 +12")
+	}
+	if selfDraw && isGangDrawLocked(game, seat) {
+		points += 6
+		parts = append(parts, "杠开 +6")
+	}
+	if selfDraw && isBurstHeadLocked(game, seat) {
+		points += 6
+		parts = append(parts, "爆头 +6")
+	}
+	if countWildcards(hand) == 4 {
+		points += 12
+		parts = append(parts, "四财神 +12")
+	}
+
 	for _, meld := range melds {
 		if meld.Type == "gang_hidden" {
 			points += 2
@@ -309,7 +335,15 @@ func tileOrder(tile model.Tile) int {
 
 func tileLabel(tile model.Tile) string {
 	if tile.Suit == "h" {
-		names := map[string]string{"E": "东", "S": "南", "W": "西", "N": "北", "Z": "中", "F": "发", "P": "白"}
+		names := map[string]string{
+			"E": "东",
+			"S": "南",
+			"W": "西",
+			"N": "北",
+			"Z": "中",
+			"F": "发",
+			"P": "白",
+		}
 		return names[tile.Code]
 	}
 	suits := map[string]string{"w": "万", "t": "条", "b": "筒"}
@@ -352,4 +386,36 @@ func findActionOption(options []model.GameActionOption, action model.PlayerActio
 		}
 	}
 	return nil
+}
+
+func isSkyHuLocked(game *GameState, seat int) bool {
+	return game != nil && game.Dealer == seat && game.DiscardCount == 0 && game.LastDrawSeat == seat
+}
+
+func isEarthHuLocked(game *GameState, seat int, source string) bool {
+	return game != nil &&
+		source == "discard" &&
+		game.DiscardCount == 1 &&
+		game.LastDiscard != nil &&
+		game.LastDiscard.Seat == game.Dealer &&
+		seat != game.Dealer
+}
+
+func isGangDrawLocked(game *GameState, seat int) bool {
+	return game != nil && game.LastDrawSeat == seat && game.LastDrawVia == "gang"
+}
+
+func selfDrawReasonLocked(game *GameState, seat int) string {
+	switch {
+	case isSkyHuLocked(game, seat):
+		return "天胡"
+	case isGangDrawLocked(game, seat) && isBurstHeadLocked(game, seat):
+		return "杠爆"
+	case isGangDrawLocked(game, seat):
+		return "杠开"
+	case isBurstHeadLocked(game, seat):
+		return "爆头"
+	default:
+		return "自摸"
+	}
 }

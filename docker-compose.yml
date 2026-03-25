@@ -26,6 +26,8 @@ services:
       REDIS_ADDR: redis:6379
       HTTP_ADDR: :8080
       CORS_ORIGIN: http://localhost
+      GOPROXY: https://goproxy.cn,direct
+      GOSUMDB: "off"
     depends_on:
       - postgres
       - redis

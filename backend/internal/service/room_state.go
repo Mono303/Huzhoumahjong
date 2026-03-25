@@ -23,13 +23,19 @@ type GameState struct {
 	Dealer       int
 	Round        int
 	CurrentTurn  int
+	TurnDrawn    bool
 	Deck         []model.Tile
 	DrawIndex    int
 	Hands        [][]model.Tile
 	Melds        [][]model.Meld
 	Discards     [][]model.Tile
 	Scores       []int
+	DiscardCount int
 	LastDiscard  *model.DiscardRef
+	LastDrawTile *model.Tile
+	LastDrawSeat int
+	LastDrawVia  string
+	GangBlock    []string
 	Pending      *PendingReaction
 	Logs         []model.GameLogEntry
 	Result       *model.GameResult
@@ -39,7 +45,13 @@ type GameState struct {
 
 type PendingReaction struct {
 	FromSeat int
-	Seat     int
 	Tile     model.Tile
-	Options  []model.GameActionOption
+	Source   string
+	Index    int
+	Claims   []PendingClaim
+}
+
+type PendingClaim struct {
+	Seat    int
+	Options []model.GameActionOption
 }
