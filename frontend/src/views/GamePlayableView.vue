@@ -150,7 +150,8 @@ const roomStore = useRoomStore()
 const loading = ref(true)
 const selectedTileKey = ref('')
 
-const game = computed(() => roomStore.game)
+const upperCode = computed(() => props.code.toUpperCase())
+const game = computed(() => (roomStore.game?.roomCode === upperCode.value ? roomStore.game : null))
 const room = computed(() => roomStore.room)
 const players = computed(() => game.value?.players ?? [])
 const canDiscard = computed(() => roomStore.availableActions.some((action) => action.type === 'discard'))
@@ -208,6 +209,17 @@ watch(
 )
 
 watch(
+  () => game.value,
+  (snapshot) => {
+    if (snapshot) {
+      loading.value = false
+      roomStore.lastError = ''
+    }
+  },
+  { immediate: true }
+)
+
+watch(
   () => game.value?.availableActions,
   () => {
     selectedTileKey.value = ''
@@ -217,18 +229,17 @@ watch(
 async function loadGame() {
   loading.value = true
   try {
-    const upperCode = props.code.toUpperCase()
-    const currentRoom = await roomStore.fetchRoom(upperCode)
+    const currentRoom = await roomStore.fetchRoom(upperCode.value)
     if (auth.token) {
-      roomStore.connect(auth.token, upperCode)
+      roomStore.connect(auth.token, upperCode.value)
     }
     if (currentRoom.status === 'playing') {
-      await roomStore.fetchGame(upperCode)
+      await roomStore.ensureGame(upperCode.value, 12, 300)
     }
   } catch (error) {
     roomStore.lastError = error instanceof Error ? error.message : '加载牌局失败'
   } finally {
-    loading.value = false
+    loading.value = !game.value
   }
 }
 

@@ -63,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import ConnectionBanner from '../components/ConnectionBanner.vue'
@@ -75,6 +75,7 @@ const props = defineProps<{ code: string }>()
 const router = useRouter()
 const auth = useAuthStore()
 const roomStore = useRoomStore()
+const redirectingToGame = ref(false)
 
 const room = computed(() => roomStore.room)
 const currentPlayer = computed(() =>
@@ -93,9 +94,16 @@ onMounted(async () => {
 
 watch(
   () => room.value?.status,
-  (status) => {
-    if (status === 'playing') {
-      router.replace(`/game/${props.code}`)
+  async (status) => {
+    if (status === 'playing' && !redirectingToGame.value) {
+      redirectingToGame.value = true
+      try {
+        await roomStore.ensureGame(props.code.toUpperCase(), 12, 300)
+      } catch {
+        // Let the game page keep retrying if the snapshot is still warming up.
+      } finally {
+        router.replace(`/game/${props.code}`)
+      }
     }
   },
   { immediate: true }

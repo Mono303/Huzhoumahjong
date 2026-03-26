@@ -4,6 +4,22 @@ import * as roomApi from '../api/rooms'
 import type { ActionOption, Envelope, GameSnapshot, MatchHistoryItem, RoomSettings, RoomSnapshot } from '../types'
 import { GameSocketRuntime } from '../ws/client_runtime'
 
+const GAME_NOT_STARTED_ERROR = 'game has not started'
+
+function normalizeRoomCode(code: string) {
+  return code.trim().toUpperCase()
+}
+
+function gameBelongsToRoom(game: GameSnapshot | null, roomCode: string) {
+  return game?.roomCode?.toUpperCase() === normalizeRoomCode(roomCode)
+}
+
+function wait(delayMs: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, delayMs)
+  })
+}
+
 export const useRoomStore = defineStore('room', {
   state: () => ({
     room: null as RoomSnapshot | null,
@@ -28,22 +44,63 @@ export const useRoomStore = defineStore('room', {
       const response = await roomApi.createRoom(settings)
       this.room = response.room
       this.game = null
+      this.lastError = ''
       return response.room
     },
     async joinRoom(code: string) {
-      const response = await roomApi.joinRoom(code)
+      const upperCode = normalizeRoomCode(code)
+      const response = await roomApi.joinRoom(upperCode)
+      if (!gameBelongsToRoom(this.game, upperCode)) {
+        this.game = null
+      }
       this.room = response.room
+      if (response.room.status !== 'playing') {
+        this.game = null
+      }
+      this.lastError = ''
       return response.room
     },
     async fetchRoom(code: string) {
-      const response = await roomApi.getRoom(code)
+      const upperCode = normalizeRoomCode(code)
+      const response = await roomApi.getRoom(upperCode)
+      if (!gameBelongsToRoom(this.game, upperCode)) {
+        this.game = null
+      }
       this.room = response.room
+      if (response.room.status !== 'playing') {
+        this.game = null
+      }
+      this.lastError = ''
       return response.room
     },
     async fetchGame(code: string) {
-      const response = await roomApi.getGame(code)
+      const upperCode = normalizeRoomCode(code)
+      const response = await roomApi.getGame(upperCode)
       this.game = response.game
+      this.lastError = ''
       return response.game
+    },
+    async ensureGame(code: string, attempts = 8, delayMs = 350) {
+      const upperCode = normalizeRoomCode(code)
+      if (gameBelongsToRoom(this.game, upperCode)) {
+        return this.game
+      }
+
+      let lastError: unknown = null
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        try {
+          return await this.fetchGame(upperCode)
+        } catch (error) {
+          lastError = error
+          const message = error instanceof Error ? error.message.toLowerCase() : ''
+          if (!message.includes(GAME_NOT_STARTED_ERROR) || attempt === attempts - 1) {
+            throw error
+          }
+          await wait(delayMs)
+        }
+      }
+
+      throw lastError instanceof Error ? lastError : new Error('加载牌局失败')
     },
     async leaveCurrentRoom() {
       if (!this.room) {
@@ -53,14 +110,17 @@ export const useRoomStore = defineStore('room', {
       this.disconnect()
       this.room = null
       this.game = null
+      this.lastError = ''
+      this.notices = []
     },
     connect(token: string, roomCode: string) {
-      if (this.socket && this.room?.code === roomCode) {
+      const upperCode = normalizeRoomCode(roomCode)
+      if (this.socket && this.room?.code === upperCode) {
         this.socket.connect()
         return
       }
       this.disconnect()
-      this.socket = new GameSocketRuntime(roomCode, token, {
+      this.socket = new GameSocketRuntime(upperCode, token, {
         onOpen: () => {
           this.connected = true
           this.lastError = ''
@@ -96,12 +156,24 @@ export const useRoomStore = defineStore('room', {
     },
     consume(message: Envelope) {
       switch (message.type) {
-        case 'room.snapshot':
-          this.room = message.payload as RoomSnapshot
+        case 'room.snapshot': {
+          const snapshot = message.payload as RoomSnapshot
+          this.room = snapshot
+          if (snapshot.status !== 'playing') {
+            this.game = null
+          }
+          this.lastError = ''
           break
-        case 'game.snapshot':
-          this.game = message.payload as GameSnapshot
+        }
+        case 'game.snapshot': {
+          const snapshot = message.payload as GameSnapshot
+          if (this.room?.code && snapshot.roomCode !== this.room.code) {
+            break
+          }
+          this.game = snapshot
+          this.lastError = ''
           break
+        }
         case 'system.notice': {
           const payload = message.payload as { message?: string }
           if (payload.message) {
