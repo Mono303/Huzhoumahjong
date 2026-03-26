@@ -93,6 +93,7 @@ import ResultModal from '../components/ResultModal.vue'
 import TileFace from '../components/TileFace.vue'
 import { useAuthStore } from '../stores/auth'
 import { useRoomStore } from '../stores/room'
+import type { ActionOption } from '../types'
 
 const props = defineProps<{ code: string }>()
 
@@ -110,10 +111,11 @@ const positionedPlayers = computed(() => {
   if (!game.value) {
     return []
   }
+  const selfSeat = game.value.selfSeat
   const positions = ['bottom', 'right', 'top', 'left']
   return players.value.map((player) => ({
     player,
-    position: positions[(player.seat - game.value!.selfSeat + 4) % 4]
+    position: positions[(player.seat - selfSeat + 4) % 4]
   }))
 })
 
@@ -176,13 +178,13 @@ function selectTile(tileKey: string) {
   selectedTileKey.value = tileKey
 }
 
-function runAction(action: 'hu' | 'peng' | 'gang' | 'gang_self' | 'pass') {
+function runAction(action: string) {
   if (action === 'gang_self') {
     const option = roomStore.availableActions.find((item) => item.type === 'gang_self')
-    roomStore.sendAction(action, option?.tileKeys?.[0] ?? '')
+    roomStore.sendAction(action as ActionOption['type'], option?.tileKeys?.[0] ?? '')
     return
   }
-  roomStore.sendAction(action)
+  roomStore.sendAction(action as ActionOption['type'])
 }
 
 function actionLabel(action: string) {

@@ -41,7 +41,7 @@ func (s *RoomService) StartGame(ctx context.Context, code string, user *model.Us
 			return nil, ErrPlayersNotReady
 		}
 	}
-	if humanCount < 2 {
+	if humanCount < 1 {
 		return nil, ErrRoomRequiresPlayers
 	}
 

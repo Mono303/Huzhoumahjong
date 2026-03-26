@@ -23,7 +23,7 @@ var (
 	ErrNotYourTurn         = errors.New("it is not your turn")
 	ErrInvalidGameAction   = errors.New("invalid game action")
 	ErrGameNotStarted      = errors.New("game has not started")
-	ErrRoomRequiresPlayers = errors.New("at least two human players are required")
+	ErrRoomRequiresPlayers = errors.New("at least one human player is required")
 	ErrLeaveWhilePlaying   = errors.New("cannot leave room while game is in progress")
 	ErrReadyWhilePlaying   = errors.New("ready status can only be changed while waiting")
 )
@@ -207,6 +207,24 @@ func (s *RoomService) GetRoomSnapshot(ctx context.Context, code string) (*model.
 	active.mu.Lock()
 	defer active.mu.Unlock()
 	return s.snapshotLocked(ctx, active)
+}
+
+func (s *RoomService) GetGameSnapshot(ctx context.Context, code string, user *model.User) (*model.GameSnapshot, error) {
+	active, err := s.getOrLoadRoom(ctx, code)
+	if err != nil {
+		return nil, err
+	}
+
+	active.mu.Lock()
+	defer active.mu.Unlock()
+
+	if active.game == nil {
+		return nil, ErrGameNotStarted
+	}
+	if seatForUser(active.players, user.ID) < 0 {
+		return nil, ErrPlayerNotInRoom
+	}
+	return s.buildGameSnapshotLocked(active, user.ID), nil
 }
 
 func (s *RoomService) ToggleReady(ctx context.Context, code string, user *model.User, ready bool) (*model.RoomSnapshot, error) {

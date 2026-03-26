@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 
 import * as roomApi from '../api/rooms'
 import type { ActionOption, Envelope, GameSnapshot, MatchHistoryItem, RoomSettings, RoomSnapshot } from '../types'
-import { GameSocket } from '../ws/client'
+import { GameSocketRuntime } from '../ws/client_runtime'
 
 export const useRoomStore = defineStore('room', {
   state: () => ({
@@ -12,7 +12,7 @@ export const useRoomStore = defineStore('room', {
     connected: false,
     lastError: '',
     notices: [] as string[],
-    socket: null as GameSocket | null
+    socket: null as GameSocketRuntime | null
   }),
   getters: {
     availableActions(state): ActionOption[] {
@@ -40,6 +40,11 @@ export const useRoomStore = defineStore('room', {
       this.room = response.room
       return response.room
     },
+    async fetchGame(code: string) {
+      const response = await roomApi.getGame(code)
+      this.game = response.game
+      return response.game
+    },
     async leaveCurrentRoom() {
       if (!this.room) {
         return
@@ -51,10 +56,11 @@ export const useRoomStore = defineStore('room', {
     },
     connect(token: string, roomCode: string) {
       if (this.socket && this.room?.code === roomCode) {
+        this.socket.connect()
         return
       }
       this.disconnect()
-      this.socket = new GameSocket(roomCode, token, {
+      this.socket = new GameSocketRuntime(roomCode, token, {
         onOpen: () => {
           this.connected = true
           this.lastError = ''

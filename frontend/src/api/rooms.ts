@@ -1,5 +1,5 @@
 import { request } from './http'
-import type { MatchHistoryItem, RoomSettings, RoomSnapshot } from '../types'
+import type { GameSnapshot, MatchHistoryItem, RoomSettings, RoomSnapshot } from '../types'
 
 export function createRoom(settings: RoomSettings) {
   return request<{ room: RoomSnapshot }>('/rooms', {
@@ -10,6 +10,10 @@ export function createRoom(settings: RoomSettings) {
 
 export function getRoom(code: string) {
   return request<{ room: RoomSnapshot }>(`/rooms/${code}`)
+}
+
+export function getGame(code: string) {
+  return request<{ game: GameSnapshot }>(`/rooms/${code}/game`)
 }
 
 export function joinRoom(code: string) {

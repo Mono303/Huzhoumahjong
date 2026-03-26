@@ -38,6 +38,15 @@ func (api *API) getRoom(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"room": room})
 }
 
+func (api *API) getGame(c *gin.Context) {
+	game, err := api.rooms.GetGameSnapshot(c.Request.Context(), c.Param("code"), middleware.UserFromContext(c))
+	if err != nil {
+		api.writeRoomError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"game": game})
+}
+
 func (api *API) joinRoom(c *gin.Context) {
 	room, err := api.rooms.JoinRoom(c.Request.Context(), c.Param("code"), middleware.UserFromContext(c))
 	if err != nil {
@@ -73,9 +82,12 @@ func (api *API) writeRoomError(c *gin.Context, err error) {
 	case errors.Is(err, service.ErrRoomIsFull),
 		errors.Is(err, service.ErrRoomAlreadyPlaying),
 		errors.Is(err, service.ErrPlayerNotInRoom),
+		errors.Is(err, service.ErrGameNotStarted),
 		errors.Is(err, service.ErrOnlyHostCanStart),
 		errors.Is(err, service.ErrPlayersNotReady),
-		errors.Is(err, service.ErrRoomRequiresPlayers):
+		errors.Is(err, service.ErrRoomRequiresPlayers),
+		errors.Is(err, service.ErrLeaveWhilePlaying),
+		errors.Is(err, service.ErrReadyWhilePlaying):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

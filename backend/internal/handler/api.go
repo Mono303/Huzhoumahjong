@@ -37,6 +37,7 @@ func (api *API) Register(router *gin.Engine) {
 	authed.GET("/matches/history", api.history)
 	authed.POST("/rooms", api.createRoom)
 	authed.GET("/rooms/:code", api.getRoom)
+	authed.GET("/rooms/:code/game", api.getGame)
 	authed.POST("/rooms/:code/join", api.joinRoom)
 	authed.POST("/rooms/:code/leave", api.leaveRoom)
 }
