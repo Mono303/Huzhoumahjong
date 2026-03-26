@@ -237,6 +237,10 @@ body{
 /* for side players, keep narrow */
 .hand.xs{--tw:36px;--th:48px;--td:3px;gap:2px;}
 
+/* tile size variants (used by meld pile + compact side views) */
+.tile.sm{--tw:44px;--th:58px;--td:4px;}
+.tile.xs{--tw:36px;--th:48px;--td:3px;}
+
 /* Melds sit BESIDE or BELOW hand, never overlapping */
 .hand-row{display:flex;align-items:flex-end;gap:8px;}
 .melds{
@@ -246,6 +250,47 @@ body{
   flex-wrap:wrap;
   max-width:150px;
 }
+
+/* Chi/Gang melds collapsed into a single clickable "pile" */
+.meld-pile{
+  display:flex;
+  align-items:flex-end;
+  gap:0;
+  padding:2px 0;
+  cursor:pointer;
+}
+.meld-pile-stack{
+  display:flex;
+  align-items:flex-end;
+  position:relative;
+  padding:0 10px 0 0;
+}
+.meld-pile-stack .tile{margin-left:-14px;}
+.meld-pile-stack .tile:first-child{margin-left:0;}
+.meld-pile-count{
+  position:absolute;
+  right:-2px;
+  bottom:2px;
+  font-size:10px;
+  color:var(--gold);
+  background:rgba(0,0,0,.45);
+  border:1px solid rgba(212,168,67,.35);
+  padding:0 4px;
+  border-radius:8px;
+}
+.meld-pile-detail{
+  display:flex;
+  gap:6px;
+  align-items:flex-end;
+  flex-wrap:wrap;
+  max-width:160px;
+}
+.meld-tiles{
+  display:flex;
+  gap:1px;
+  align-items:flex-end;
+}
+
 .meld.pile{
   position:relative;
   width:18px;
@@ -414,10 +459,22 @@ body{
   justify-content:center;align-items:flex-start;
   width:100%;
 }
+.disc-zone.dn{align-items:flex-end;} /* 上家弃牌靠近牌桌中心边 */
+.disc-zone.ds{align-items:flex-start;} /* 下家弃牌靠近牌桌中心边 */
+.disc-zone.dn{align-content:flex-end;} /* 多排弃牌也贴近中心边 */
+.disc-zone.ds{align-content:flex-start;} /* 多排弃牌也贴近中心边 */
+.disc-zone.dn{align-self:end;} /* 顶部区域内容贴近中心边 */
+.disc-zone.ds{align-self:start;} /* 底部区域内容贴近中心边 */
+
 .disc-zone.dw,.disc-zone.de{
   display:flex;flex-wrap:wrap;gap:2px;
-  align-content:flex-start;max-width:60px;
+  align-content:flex-start;align-items:flex-start;
+  width:100%;max-width:90px;
 }
+.disc-zone.dw{justify-content:flex-end;} /* 左侧：牌面朝向中心 */
+.disc-zone.de{justify-content:flex-start;} /* 右侧：牌面朝向中心 */
+.disc-zone.dw{justify-self:end;}  /* 左侧弃牌区贴近中心边（右侧） */
+.disc-zone.de{justify-self:start;}/* 右侧弃牌区贴近中心边（左侧） */
 .ci{
   grid-area:ci;
   display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -580,7 +637,6 @@ body{
     <div class="panel">
       <div class="tabs">
         <div class="tab on" onclick="setTab('local',this)">本地对战</div>
-        <div class="tab" onclick="setTab('online',this)">在线联机</div>
       </div>
 
       <!-- LOCAL -->
@@ -593,28 +649,6 @@ body{
         <button class="btn" onclick="startLocal()">▶ 开始对局</button>
       </div>
 
-      <!-- ONLINE -->
-      <div class="tc" id="tc-online">
-        <div class="row"><span class="lbl">您的名字</span><input class="inp" id="oname" value="玩家" maxlength="8"></div>
-        <div class="row"><span class="lbl">初始积分</span><input class="inp" id="oscore" type="number" value="1000" step="100"></div>
-        <div class="row"><span class="lbl">底分</span><input class="inp" id="obase" type="number" value="10" min="1"></div>
-        <button class="btn" onclick="createRoom()">🏠 创建房间</button>
-        <div style="text-align:center;font-size:10px;color:#3a5a3a;margin:8px 0;">— 或加入已有房间 —</div>
-        <div class="row"><span class="lbl">房间码</span><input class="inp" id="rcode" placeholder="6位" maxlength="6" style="letter-spacing:5px;"></div>
-        <button class="btn sec" onclick="joinRoom()">→ 加入房间</button>
-        <div class="waiting" id="waiting">
-          <div class="code-box" id="code-disp">------</div>
-          <div style="font-size:10px;color:#3a5a3a;">将房间码发给朋友</div>
-          <div class="slots" id="slots">
-            <div class="slot ok" id="s0">您（房主）</div>
-            <div class="slot wait" id="s1">等待...</div>
-            <div class="slot wait" id="s2">等待...</div>
-            <div class="slot wait" id="s3">等待...</div>
-          </div>
-          <button class="btn sec" onclick="addAI()">＋ AI 填充空位</button>
-          <button class="btn" id="btn-start-ol" onclick="startOnlineGame()" disabled style="opacity:.4;">等待玩家...</button>
-        </div>
-      </div>
     </div>
   </div>
 </div>
@@ -900,6 +934,9 @@ function buildTile(t, extra=''){
    ═══════════════════════════════════════════════════ */
 let G={}, CFG={};
 
+// Human action choice window (chi/peng/gang). Extends from the original 3000ms.
+const REACT_CHOICE_MS = 6000;
+
 function readCFG(ol=false){
   CFG.name    = document.getElementById(ol?'oname':'name').value||'玩家';
   CFG.score   = +document.getElementById(ol?'oscore':'score').value||1000;
@@ -934,6 +971,7 @@ function initRound(){
   G.phase='idle';G.cur=G.dealer;
   G.lastD=null;G.lastDpid=-1;G.selIdx=-1;
   G.pending=null;G.aiT=null;
+  G.meldChiGangExpanded={};
   G.round++;
   for(let i=0;i<4;i++)for(let j=0;j<13;j++)G.hands[i].push(G.deck[G.di++]);
   for(let i=0;i<4;i++)sortH(G.hands[i]);
@@ -946,12 +984,19 @@ function initRound(){
 function drawTile(pid){
   if(G.di>=G.deck.length)return null;
   const t=G.deck[G.di++];
-  G.hands[pid].push(t);sortH(G.hands[pid]);return t;
+  // append to rightmost; we tidy only at the next turn start
+  G.hands[pid].push(t);
+  return t;
+}
+
+function tidyHand(pid){
+  sortH(G.hands[pid]);
 }
 
 /* ─── TURN ───────────────────────────────────────── */
 function turn(pid){
   G.cur=pid;G.phase='prediscard';
+  tidyHand(pid);
   const t=drawTile(pid);
   if(!t){endNoWin();return;}
   SFX.draw();
@@ -1032,7 +1077,7 @@ function checkReact(from,tile){
   }
   if(reacts[0]){
     showBar([...reacts[0],'pass'],tile,from);
-    G.aiT=setTimeout(()=>aiReact(reacts,from,tile),3000);
+    G.aiT=setTimeout(()=>aiReact(reacts,from,tile),REACT_CHOICE_MS);
   } else aiReact(reacts,from,tile);
 }
 
@@ -1255,12 +1300,70 @@ function renderHand(pid){
 
 function renderMelds(pid){
   const el=document.getElementById(`melds-${pid}`);el.innerHTML='';
-  for(const m of G.melds[pid]){
-    const md=document.createElement('div');md.className='meld pile';
-    const flag=document.createElement('span');
-    flag.className='meld-flag';
-    flag.textContent=m.type==='chi'?'吃':m.type==='peng'?'碰':'杠';
-    md.appendChild(flag);
+  const melds=G.melds[pid]||[];
+  const isChiGang = (m)=> m.type==='chi' || m.type.startsWith('gang');
+  const chiGangs=melds.filter(isChiGang);
+  const expanded = !!(G.meldChiGangExpanded&&G.meldChiGangExpanded[pid]);
+
+  let pileAdded=false;
+  for(const m of melds){
+    if(isChiGang(m)){
+      if(pileAdded) continue;
+      pileAdded=true;
+      if(!chiGangs.length) continue;
+
+      const pile=document.createElement('div');
+      pile.className='meld-pile';
+      pile.title='点击展开/收起吃/杠副露';
+      pile.onclick=()=>{
+        G.meldChiGangExpanded = G.meldChiGangExpanded || {};
+        G.meldChiGangExpanded[pid] = !expanded;
+        renderMelds(pid);
+      };
+
+      if(!expanded){
+        const stack=document.createElement('div');
+        stack.className='meld-pile-stack';
+        const maxTiles=Math.min(3, chiGangs.length);
+        for(let i=0;i<maxTiles;i++){
+          const gm=chiGangs[i];
+          const hidden=gm.type==='gang_hidden'&&pid!==0;
+          const t = hidden ? null : gm.tiles[0];
+          const tt=buildTile(t,'xs');
+          tt.style.zIndex=String(100-i);
+          stack.appendChild(tt);
+        }
+        const cnt=document.createElement('div');
+        cnt.className='meld-pile-count';
+        cnt.textContent=chiGangs.length;
+        pile.appendChild(stack);
+        pile.appendChild(cnt);
+      } else {
+        const detail=document.createElement('div');
+        detail.className='meld-pile-detail';
+        for(const gm of chiGangs){
+          const md=document.createElement('div');md.className='meld-tiles';
+          const size=(pid===1||pid===3)?'xs':'sm';
+          for(const t of gm.tiles){
+            const hidden=gm.type==='gang_hidden'&&pid!==0;
+            md.appendChild(buildTile(hidden?null:t,size));
+          }
+          detail.appendChild(md);
+        }
+        pile.appendChild(detail);
+      }
+
+      el.appendChild(pile);
+      continue;
+    }
+
+    // peng (and any other non chi/gang melds) render normally
+    const md=document.createElement('div');md.className='meld-tiles';
+    const size=(pid===1||pid===3)?'xs':'sm';
+    for(const t of m.tiles){
+      const hidden=m.type==='gang_hidden'&&pid!==0;
+      md.appendChild(buildTile(hidden?null:t,size));
+    }
     el.appendChild(md);
   }
 }
