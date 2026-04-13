@@ -1,12 +1,13 @@
 {
-  "name": "huzhou-mahjong-online",
-  "version": "1.0.0",
-  "main": "server.js",
-  "dependencies": {
-    "express": "^4.18.2",
-    "socket.io": "^4.7.2"
-  },
+  "name": "huzhoumahjong",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Engineering refactor for the Huzhou Mahjong web game.",
   "scripts": {
-    "start": "node server.js"
+    "frontend:dev": "npm --prefix frontend run dev",
+    "frontend:build": "npm --prefix frontend run build",
+    "backend:dev": "cd backend && go run ./cmd/api",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down"
   }
 }

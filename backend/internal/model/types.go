@@ -1,0 +1,190 @@
+package model
+
+import (
+	"encoding/json"
+	"time"
+)
+
+type RoomStatus string
+
+const (
+	RoomStatusWaiting  RoomStatus = "waiting"
+	RoomStatusPlaying  RoomStatus = "playing"
+	RoomStatusFinished RoomStatus = "finished"
+)
+
+type PlayerActionType string
+
+const (
+	ActionDiscard  PlayerActionType = "discard"
+	ActionHu       PlayerActionType = "hu"
+	ActionPeng     PlayerActionType = "peng"
+	ActionChi      PlayerActionType = "chi"
+	ActionGang     PlayerActionType = "gang"
+	ActionGangSelf PlayerActionType = "gang_self"
+	ActionPass     PlayerActionType = "pass"
+)
+
+type User struct {
+	ID           string    `json:"id"`
+	Username     string    `json:"username"`
+	IsGuest      bool      `json:"isGuest"`
+	SessionToken string    `json:"-"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+	LastSeenAt   time.Time `json:"lastSeenAt"`
+}
+
+type RoomSettings struct {
+	InitialScore    int    `json:"initialScore"`
+	BaseBet         int    `json:"baseBet"`
+	PunishLabel     string `json:"punishLabel"`
+	PunishThreshold int    `json:"punishThreshold"`
+}
+
+type Room struct {
+	ID          string       `json:"id"`
+	Code        string       `json:"code"`
+	OwnerUserID string       `json:"ownerUserId"`
+	Status      RoomStatus   `json:"status"`
+	Settings    RoomSettings `json:"settings"`
+	MatchID     *string      `json:"matchId,omitempty"`
+	CreatedAt   time.Time    `json:"createdAt"`
+	UpdatedAt   time.Time    `json:"updatedAt"`
+}
+
+type RoomPlayer struct {
+	ID        string    `json:"id"`
+	RoomID    string    `json:"roomId"`
+	UserID    string    `json:"userId,omitempty"`
+	Name      string    `json:"name"`
+	Seat      int       `json:"seat"`
+	IsHost    bool      `json:"host"`
+	IsReady   bool      `json:"ready"`
+	IsBot     bool      `json:"bot"`
+	Connected bool      `json:"connected"`
+	JoinedAt  time.Time `json:"joinedAt"`
+}
+
+type Match struct {
+	ID         string          `json:"id"`
+	RoomID     string          `json:"roomId"`
+	Status     string          `json:"status"`
+	WinnerSeat *int            `json:"winnerSeat,omitempty"`
+	Summary    json.RawMessage `json:"summary,omitempty"`
+	CreatedAt  time.Time       `json:"createdAt"`
+	UpdatedAt  time.Time       `json:"updatedAt"`
+}
+
+type MatchEvent struct {
+	ID        string          `json:"id"`
+	MatchID   string          `json:"matchId"`
+	Sequence  int             `json:"sequence"`
+	EventType string          `json:"eventType"`
+	Payload   json.RawMessage `json:"payload"`
+	CreatedAt time.Time       `json:"createdAt"`
+}
+
+type MatchHistoryItem struct {
+	MatchID   string         `json:"matchId"`
+	RoomCode  string         `json:"roomCode"`
+	Result    string         `json:"result"`
+	CreatedAt time.Time      `json:"createdAt"`
+	Summary   map[string]any `json:"summary"`
+}
+
+type Tile struct {
+	Key    string `json:"key"`
+	Code   string `json:"code"`
+	Suit   string `json:"suit"`
+	Number int    `json:"number"`
+}
+
+type Meld struct {
+	Type  string `json:"type"`
+	Tiles []Tile `json:"tiles"`
+}
+
+type RoomPlayerView struct {
+	ID        string `json:"id"`
+	UserID    string `json:"userId,omitempty"`
+	Name      string `json:"name"`
+	Seat      int    `json:"seat"`
+	Host      bool   `json:"host"`
+	Ready     bool   `json:"ready"`
+	Bot       bool   `json:"bot"`
+	Connected bool   `json:"connected"`
+}
+
+type RoomSnapshot struct {
+	Code        string           `json:"code"`
+	Status      RoomStatus       `json:"status"`
+	OwnerUserID string           `json:"ownerUserId"`
+	Settings    RoomSettings     `json:"settings"`
+	MatchID     *string          `json:"matchId,omitempty"`
+	Players     []RoomPlayerView `json:"players"`
+	CreatedAt   time.Time        `json:"createdAt"`
+	UpdatedAt   time.Time        `json:"updatedAt"`
+}
+
+type GamePlayerView struct {
+	Seat      int    `json:"seat"`
+	Name      string `json:"name"`
+	Score     int    `json:"score"`
+	Bot       bool   `json:"bot"`
+	Host      bool   `json:"host"`
+	Ready     bool   `json:"ready"`
+	Connected bool   `json:"connected"`
+	Hand      []Tile `json:"hand,omitempty"`
+	HandCount int    `json:"handCount"`
+	Melds     []Meld `json:"melds"`
+}
+
+type GameActionOption struct {
+	Type       PlayerActionType `json:"type"`
+	TileKeys   []string         `json:"tileKeys,omitempty"`
+	ChiOptions [][]Tile         `json:"chiOptions,omitempty"`
+}
+
+type DiscardRef struct {
+	Seat int  `json:"seat"`
+	Tile Tile `json:"tile"`
+}
+
+type GameLogEntry struct {
+	Text      string    `json:"text"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type GameResult struct {
+	WinnerSeat  *int   `json:"winnerSeat,omitempty"`
+	SelfDraw    bool   `json:"selfDraw"`
+	Fan         int    `json:"fan"`
+	Description string `json:"description"`
+	Delta       []int  `json:"delta"`
+	FinalScores []int  `json:"finalScores"`
+	Reason      string `json:"reason"`
+}
+
+type GameSnapshot struct {
+	MatchID          string             `json:"matchId"`
+	RoomCode         string             `json:"roomCode"`
+	Status           string             `json:"status"`
+	Phase            string             `json:"phase"`
+	SelfSeat         int                `json:"selfSeat"`
+	Dealer           int                `json:"dealer"`
+	Round            int                `json:"round"`
+	CurrentTurn      int                `json:"currentTurn"`
+	DeckRemaining    int                `json:"deckRemaining"`
+	Players          []GamePlayerView   `json:"players"`
+	Discards         [][]Tile           `json:"discards"`
+	LastDiscard      *DiscardRef        `json:"lastDiscard,omitempty"`
+	Logs             []GameLogEntry     `json:"logs"`
+	AvailableActions []GameActionOption `json:"availableActions"`
+	Result           *GameResult        `json:"result,omitempty"`
+}
+
+type Envelope struct {
+	Type    string      `json:"type"`
+	Payload interface{} `json:"payload,omitempty"`
+}
